@@ -44,7 +44,7 @@ export const DocumentSchema = z.object({
 export type Document = z.infer<typeof DocumentSchema>;
 
 export const TopSuppliersInput = z.object({
-  buyer_name: z.string(),
+  buyer_name: z.string().optional(),
   from_date: z.string(),
   to_date: z.string(),
 });

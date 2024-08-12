@@ -97,16 +97,32 @@ app.post("/api/supplier_stats", async (req, res, next) => {
 
 app.post("/api/top_suppliers", async (req, res, next) => {
   try {
+    let limit = Number(req.query.limit);
+    let page = Number(req.query.page);
+
+    if (!limit || limit > 50) {
+      limit = 50;
+    }
+
+    if (!page) {
+      page = 0;
+    }
+
     const input = TopSuppliersInput.parse(req.body);
     const from = `${input.from_date.substring(0, 4)}-${input.from_date.substring(4, 6)}-${input.from_date.substring(6)}`;
     const to = `${input.to_date.substring(0, 4)}-${input.to_date.substring(4, 6)}-${input.to_date.substring(6)}`;
     const knexDb = await getDBInstance();
     const result = await knexDb("spend_transactions")
-      .where({ buyer_name: input.buyer_name })
+      .where(function () {
+        if (!input.buyer_name) return;
+        this.where({ buyer_name: input.buyer_name });
+      })
       .whereBetween("transaction_timestamp", [from, to])
       .select(knexDb.raw("SUM(amount) as total_amount"), knexDb.raw("supplier_name as name"))
       .groupBy("supplier_name")
-      .orderBy("total_amount", "DESC");
+      .orderBy("total_amount", "DESC")
+      .limit(limit)
+      .offset(page * limit);
     res.json(result);
   } catch (err) {
     next(err);
