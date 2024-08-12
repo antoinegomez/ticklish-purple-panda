@@ -4,6 +4,16 @@ import path from "path";
 
 const MIGRATION_DIR = "./migrations";
 
+let _dbInstance: Knex;
+
+export async function getDBInstance() {
+  if (!_dbInstance) {
+    _dbInstance = await getDBConnection();
+  }
+
+  return _dbInstance;
+}
+
 /**
  * Opens a connection to sqlite database.
  * The path can be read from SQLITE_PATH environment variable
@@ -31,10 +41,7 @@ export async function getDBConnection(): Promise<Knex> {
     try {
       for (const migrationFile of migrationFiles) {
         console.log(`Running ${migrationFile}`);
-        const migrationSql = fs.readFileSync(
-          path.join(MIGRATION_DIR, migrationFile),
-          { encoding: "utf8" }
-        );
+        const migrationSql = fs.readFileSync(path.join(MIGRATION_DIR, migrationFile), { encoding: "utf8" });
         await knexDb.raw(migrationSql);
       }
     } catch (err) {

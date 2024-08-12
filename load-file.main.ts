@@ -1,8 +1,11 @@
 import Papa from "papaparse";
 import fs from "fs";
-import { DateTime } from "luxon";
 import { getDBConnection } from "./db";
 import { parseAmount } from "./scraperUtils";
+import { formatToIso } from "./lib/date-parser";
+import { Knex } from "knex";
+
+const BATCH_LIMIT = 500;
 
 /**
  * This script loads a csv file containg spending data in gov.uk/HMRC format
@@ -34,10 +37,12 @@ type SpendTransaction = {
   transaction_timestamp: string; // should be iso format
 };
 
-async function main() {
-  // TODO: Pass this as an argument?
-  const csvPath = "./sample_data/Transparency_DfE_Spend_July_2023__1_.csv";
+export type LoadFileOptions = {
+  knexDb?: Knex;
+  destroyDb?: boolean;
+};
 
+export async function main(csvPath: string, { knexDb: _knexDb, destroyDb }: LoadFileOptions = { destroyDb: true }) {
   console.log(`Reading ${csvPath}.`);
   const csvContent = fs.readFileSync(csvPath, { encoding: "utf8" });
   const csvData = Papa.parse(csvContent, {
@@ -48,9 +53,10 @@ async function main() {
   console.log(`Read ${csvData.data.length} transactions.`);
   console.debug(`First row: ${JSON.stringify(csvData.data[0])}`);
 
-  const knexDb = await getDBConnection();
+  const knexDb = _knexDb ? _knexDb : await getDBConnection();
 
-  let rowNum = 1;
+  let batchNum = 1;
+  const batch = [];
   for (const row of csvData.data) {
     try {
       // Add more validation in the future?
@@ -62,41 +68,42 @@ async function main() {
         continue;
       }
 
-      // TODO: We might have to support other date formats in the future
-      // See https://moment.github.io/luxon/#/parsing
-      const isoTsp = DateTime.fromFormat(
-        spendDataRow["Date"],
-        "dd-MM-yyyy"
-      ).toISO();
-      if (!isoTsp) {
-        throw new Error(
-          `Invalid transaction timestamp ${spendDataRow["Date"]}.`
-        );
-      }
+      const isoTsp = formatToIso(spendDataRow["Date"]);
 
-      /**
-       * Note that we're not specifying `id` here which will be automatically generated,
-       * but knex complains about sqlite not supporting default values.
-       * It's ok to ignore that warning.
-       */
-      // TODO: Use .batchInsert to speed this up, it's really slow with > 1000 transactions!
-      await knexDb<SpendTransaction>("spend_transactions").insert({
+      batch.push({
         buyer_name: spendDataRow["Entity"],
         supplier_name: spendDataRow["Supplier"],
         amount: parseAmount(spendDataRow["Amount"]),
         transaction_timestamp: isoTsp,
       });
 
-      ++rowNum;
+      if (batch.length >= BATCH_LIMIT) {
+        await knexDb.batchInsert<SpendTransaction>("spend_transactions", batch);
+        ++batchNum;
+        batch.splice(0, BATCH_LIMIT);
+      }
     } catch (e) {
       // Re-throw all errors, but log some useful info
-      console.error(`Failed to process row ${rowNum}: ${JSON.stringify(row)}`);
+      console.error(`Failed to process batch ${batchNum}: ${JSON.stringify(row)}`);
+      throw e;
+    }
+  }
+
+  // any remaining items need to be inserted
+  if (batch.length) {
+    try {
+      await knexDb.batchInsert<SpendTransaction>("spend_transactions", batch);
+    } catch (e) {
+      // Re-throw all errors, but log some useful info
+      console.error(`Failed to process row ${batchNum}`);
       throw e;
     }
   }
 
   console.log("Finished writing to the DB.");
-  await knexDb.destroy();
+  destroyDb && (await knexDb.destroy());
 }
 
-main();
+if (require.main === module) {
+  main(process.argv[2], { destroyDb: true });
+}
