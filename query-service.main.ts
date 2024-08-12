@@ -1,6 +1,6 @@
 import express, { NextFunction, Request, Response } from "express";
-import { getDBConnection } from "./db";
-import knex from "knex";
+import { getDBInstance } from "./db";
+import { TopSuppliersInput } from "./lib/schemas";
 
 /**
  * This file has little structure and doesn't represent production quality code.
@@ -36,12 +36,12 @@ app.get("/", (_req, res) => {
  * This operation exposes basic high level stats of the transaction database.
  */
 app.get("/api/stats", async (_req, res) => {
-  const knexDb = await getDBConnection();
+  const knexDb = await getDBInstance();
 
   const result = await knexDb("spend_transactions").select(
     knexDb.raw("COUNT(*) AS transaction_count"),
     knexDb.raw("COUNT(DISTINCT supplier_name) as unique_suppliers"),
-    knexDb.raw("COUNT(DISTINCT buyer_name) as unique_buyers")
+    knexDb.raw("COUNT(DISTINCT buyer_name) as unique_buyers"),
   );
 
   const response: SpendStatsResponse = {
@@ -68,7 +68,7 @@ type SupplierStatsResponse = {
  */
 app.post("/api/supplier_stats", async (req, res, next) => {
   try {
-    const knexDb = await getDBConnection();
+    const knexDb = await getDBInstance();
     const requestPayload = req.body as SupplierStatsRequest;
     if (!requestPayload.supplier_name) {
       throw new Error("`supplier_name` must be specified.");
@@ -79,7 +79,7 @@ app.post("/api/supplier_stats", async (req, res, next) => {
       .select(
         knexDb.raw("COUNT(*) AS transaction_count"),
         knexDb.raw("SUM(amount) as total_value"),
-        knexDb.raw("COUNT(DISTINCT buyer_name) as unique_buyers")
+        knexDb.raw("COUNT(DISTINCT buyer_name) as unique_buyers"),
       );
 
     console.log(JSON.stringify(result));
@@ -95,10 +95,19 @@ app.post("/api/supplier_stats", async (req, res, next) => {
   }
 });
 
-app.post("/api/top_suppliers", async (_req, _res, next) => {
+app.post("/api/top_suppliers", async (req, res, next) => {
   try {
-    // TODO: Implement top suppliers API
-    throw new Error("Not implemented");
+    const input = TopSuppliersInput.parse(req.body);
+    const from = `${input.from_date.substring(0, 4)}-${input.from_date.substring(4, 6)}-${input.from_date.substring(6)}`;
+    const to = `${input.to_date.substring(0, 4)}-${input.to_date.substring(4, 6)}-${input.to_date.substring(6)}`;
+    const knexDb = await getDBInstance();
+    const result = await knexDb("spend_transactions")
+      .where({ buyer_name: input.buyer_name })
+      .whereBetween("transaction_timestamp", [from, to])
+      .select(knexDb.raw("SUM(amount) as total_amount"), knexDb.raw("supplier_name as name"))
+      .groupBy("supplier_name")
+      .orderBy("total_amount", "DESC");
+    res.json(result);
   } catch (err) {
     next(err);
   }

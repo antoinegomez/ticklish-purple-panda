@@ -1,3 +1,10 @@
+/**
+ *
+ * Source:
+ * https://observablehq.com/@mbostock/localized-number-parsing
+ *
+ * No need to re-invent the wheel. This works quite well to format localized numbers.
+ */
 export class NumberParser {
   private _group: RegExp;
   private _decimal: RegExp;
@@ -21,6 +28,11 @@ export class NumberParser {
   }
 }
 
+// Shortcut to get the english locale
+// Also add support to parse the local currency
+//
+// But it might be a better idea to extract it to another module/function
+// and let the user remove all curre onces from the number instead
 export class EnglishNumberParser extends NumberParser {
   constructor() {
     super("en");
